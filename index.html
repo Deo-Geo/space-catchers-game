@@ -5,9 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Space Catchers Multiplayer</title>
     
-    <!-- ADDED: Socket.io Library for Multiplayer -->
+    <!-- Socket.io for Multiplayer -->
     <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
-    <!-- ADDED: Supabase for Cloud Saving -->
+    <!-- Supabase for Cloud Saving -->
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 
     <style>
@@ -15,39 +15,10 @@
         canvas { display: block; }
 
         /* --- UI STYLING --- */
-        #ui {
-            position: absolute;
-            top: 20px;
-            left: 20px;
-            color: white;
-            pointer-events: none;
-            text-shadow: 2px 2px 4px black;
-        }
-
-        #ammo-ui {
-            position: absolute;
-            top: 20px;
-            right: 20px;
-            color: #e94560;
-            font-size: 24px;
-            font-weight: bold;
-            text-align: right;
-            pointer-events: none;
-        }
-
+        #ui { position: absolute; top: 20px; left: 20px; color: white; pointer-events: none; text-shadow: 2px 2px 4px black; }
+        #ammo-ui { position: absolute; top: 20px; right: 20px; color: #e94560; font-size: 24px; font-weight: bold; text-align: right; pointer-events: none; }
         .stats { font-size: 28px; font-weight: bold; margin-bottom: 10px; }
-
-        .btn {
-            background: #1a1a2e;
-            color: #e94560;
-            border: 2px solid #e94560;
-            padding: 8px 15px;
-            cursor: pointer;
-            pointer-events: auto;
-            font-weight: bold;
-            transition: 0.2s;
-            font-size: 14px;
-        }
+        .btn { background: #1a1a2e; color: #e94560; border: 2px solid #e94560; padding: 8px 15px; cursor: pointer; pointer-events: auto; font-weight: bold; transition: 0.2s; font-size: 14px; }
         .btn:hover { background: #e94560; color: white; }
         .btn-sell-all { width: 100%; margin-bottom: 10px; padding: 15px; font-size: 18px; }
 
@@ -76,12 +47,7 @@
             padding-right: 5px;
         }
 
-        .item-row, .upgrade-card {
-            display: flex;
-            padding: 10px;
-            border-bottom: 1px solid #222;
-        }
-
+        .item-row, .upgrade-card { display: flex; padding: 10px; border-bottom: 1px solid #222; }
         .upgrade-card { flex-direction: column; gap: 8px; border-bottom: 2px solid #333; }
         .item-info { flex-grow: 1; margin-left: 10px; }
         .item-name { font-weight: bold; display: block; }
@@ -93,7 +59,6 @@
         .req-met { color: #00ff00; border-color: #008800; }
         .req-missing { color: #ff4444; }
 
-        /* Settings Specific */
         .setting-row { display: flex; justify-content: space-between; align-items: center; padding: 15px 0; border-bottom: 1px solid #333; }
     </style>
 </head>
@@ -139,6 +104,19 @@
         <button class="btn" onclick="toggleSettings()" style="width:100%; background:#333; border:none; color:white; margin-top: 20px;">CLOSE</button>
     </div>
 
+    <!-- Login Modal (Visible by default) -->
+    <div id="login-modal" class="modal" style="display: block; text-align: center; padding-bottom: 40px;">
+        <h2 style="color:#e94560; margin-bottom: 10px;">PILOT IDENTIFICATION</h2>
+        <p style="font-size: 14px; color: #aaa; margin-bottom: 20px;">Enter your secret Pilot Name to load your save.</p>
+        
+        <!-- type="password" makes the text turn into dots ••••• -->
+        <input type="password" id="pilot-name-input" placeholder="Secret Pilot Name" 
+               style="background: #111; border: 1px solid #444; color: white; padding: 10px; width: 80%; font-size: 18px; text-align: center; margin-bottom: 20px; outline: none;">
+        
+        <br>
+        <button class="btn" onclick="startGame()" style="font-size: 20px; padding: 10px 30px;">LAUNCH SHIP</button>
+    </div>
+
     <canvas id="gameCanvas"></canvas>
 
 <script>
@@ -152,18 +130,13 @@
     const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndheHlpZnpvaHFpdnBzaW1vd3F3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI1NDM3NDIsImV4cCI6MjA4ODExOTc0Mn0.2kUxhMuPgyXyX8g--Fc_amooJeFgBd9Q0qnhZ2zewMU';
     const supabase = window.supabase.createClient(supabaseUrl, supabaseKey);
 
-    // Ask player for a name to save their data under
-    let playerName = localStorage.getItem('spaceCatchersName');
-    if (!playerName) {
-        playerName = prompt("Enter your Pilot Name to save your progress in the cloud:");
-        if (!playerName) playerName = "Guest_" + Math.floor(Math.random() * 10000);
-        localStorage.setItem('spaceCatchersName', playerName);
-    }
+    // CHANGED: We don't ask for name yet. We wait for the login box.
+    let playerName = "";
 
     // ==========================================
     // MULTIPLAYER SETUP
     // ==========================================
-    // REPLACE THIS URL WITH YOUR RENDER.COM SERVER URL LATER
+    // REPLACE THIS URL WITH YOUR RENDER.COM SERVER URL IF NEEDED
     const socket = io('https://space-catchers-server.onrender.com'); 
     
     let otherPlayers = {}; 
@@ -237,7 +210,7 @@
 
     // --- 4. PERSISTENCE (CLOUD SAVING) ---
     async function saveGame() {
-        // Save to cloud!
+        if (!playerName) return; // Don't save if we haven't logged in
         const { error } = await supabase
             .from('saves')
             .upsert({ 
@@ -247,12 +220,10 @@
                 upgrades: upgrades, 
                 controlMode: controlMode 
             });
-            
         if (error) console.error("Cloud save failed:", error);
     }
 
     async function loadGame() {
-        // Fetch from cloud!
         const { data, error } = await supabase
             .from('saves')
             .select('*')
@@ -289,6 +260,36 @@
         for(let i = 0; i < ITEM_LIMIT; i++) spawnOneItem();
         animate();
     }
+
+    // --- NEW: LOGIN FUNCTION ---
+    async function startGame() {
+        const input = document.getElementById('pilot-name-input');
+        const name = input.value.trim();
+
+        if (!name) {
+            alert("Please enter a Pilot Name to fly!");
+            return;
+        }
+
+        // Hide the login box
+        document.getElementById('login-modal').style.display = 'none';
+
+        // Set the global name
+        playerName = name;
+        
+        // Save it locally so you don't have to type it next time (it will pre-fill next time)
+        localStorage.setItem('spaceCatchersName', playerName);
+
+        // NOW we start the game
+        await init();
+    }
+
+    // Check if we already have a name saved, and pre-fill the box (but keep it hidden as dots)
+    const savedName = localStorage.getItem('spaceCatchersName');
+    if (savedName) {
+        document.getElementById('pilot-name-input').value = savedName;
+    }
+
     function spawnOneItem() {
         items.push({ x: Math.random() * WORLD_SIZE, y: Math.random() * WORLD_SIZE, type: ITEM_TYPES[Math.floor(Math.random() * ITEM_TYPES.length)] });
     }
@@ -538,7 +539,8 @@
     function resize() { canvas.width = window.innerWidth; canvas.height = window.innerHeight; }
     function animate() { update(); draw(); requestAnimationFrame(animate); }
     window.addEventListener('resize', resize);
-    init();
+    
+    // NOTE: Removed 'init()' from here. It is now called inside 'startGame()'!
 </script>
 </body>
 </html>
