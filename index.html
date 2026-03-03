@@ -1,0 +1,503 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Space Catchers Multiplayer</title>
+    
+    <!-- ADDED: Socket.io Library for Multiplayer -->
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+
+    <style>
+        body { margin: 0; overflow: hidden; background: #020205; font-family: 'Segoe UI', sans-serif; }
+        canvas { display: block; }
+
+        /* --- UI STYLING --- */
+        #ui {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            color: white;
+            pointer-events: none;
+            text-shadow: 2px 2px 4px black;
+        }
+
+        #ammo-ui {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            color: #e94560;
+            font-size: 24px;
+            font-weight: bold;
+            text-align: right;
+            pointer-events: none;
+        }
+
+        .stats { font-size: 28px; font-weight: bold; margin-bottom: 10px; }
+
+        .btn {
+            background: #1a1a2e;
+            color: #e94560;
+            border: 2px solid #e94560;
+            padding: 8px 15px;
+            cursor: pointer;
+            pointer-events: auto;
+            font-weight: bold;
+            transition: 0.2s;
+            font-size: 14px;
+        }
+        .btn:hover { background: #e94560; color: white; }
+        .btn-sell-all { width: 100%; margin-bottom: 10px; padding: 15px; font-size: 18px; }
+
+        /* --- MODAL WINDOWS --- */
+        .modal {
+            display: none;
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(10, 10, 25, 0.98);
+            border: 2px solid #444;
+            padding: 25px;
+            width: 480px;
+            color: white;
+            z-index: 10;
+            box-shadow: 0 0 30px rgba(233, 69, 96, 0.3);
+        }
+
+        .list-container {
+            max-height: 450px;
+            overflow-y: auto;
+            margin: 15px 0;
+            background: rgba(0,0,0,0.5);
+            border-radius: 5px;
+            padding-right: 5px;
+        }
+
+        .item-row, .upgrade-card {
+            display: flex;
+            padding: 10px;
+            border-bottom: 1px solid #222;
+        }
+
+        .upgrade-card { flex-direction: column; gap: 8px; border-bottom: 2px solid #333; }
+        .item-info { flex-grow: 1; margin-left: 10px; }
+        .item-name { font-weight: bold; display: block; }
+        
+        #reload-bar-container { width: 150px; height: 10px; background: #333; margin-top: 5px; display: none; }
+        #reload-bar { width: 0%; height: 100%; background: #e94560; }
+
+        .req-tag { background: #222; padding: 4px 8px; border-radius: 4px; font-size: 12px; margin-right: 5px; display: inline-block; margin-top: 4px; border: 1px solid #444; }
+        .req-met { color: #00ff00; border-color: #008800; }
+        .req-missing { color: #ff4444; }
+
+        /* Settings Specific */
+        .setting-row { display: flex; justify-content: space-between; align-items: center; padding: 15px 0; border-bottom: 1px solid #333; }
+    </style>
+</head>
+<body>
+
+    <div id="ui">
+        <div class="stats">Bank: $<span id="money-count">0</span></div>
+        <button class="btn" onclick="toggleInventory()">CARGO (I)</button>
+        <button class="btn" onclick="toggleUpgrades()">UPGRADES (U)</button>
+        <button class="btn" onclick="toggleSettings()">SETTINGS (O)</button>
+        <button class="btn" style="opacity: 0.5; font-size: 10px;" onclick="resetGame()">RESET DATA</button>
+    </div>
+
+    <div id="ammo-ui">
+        AMMO: <span id="ammo-count">5</span> / <span id="ammo-max">5</span>
+        <div id="reload-bar-container"><div id="reload-bar"></div></div>
+        <div id="reload-text" style="font-size: 12px; display: none;">RELOADING...</div>
+    </div>
+
+    <!-- Inventory Modal -->
+    <div id="inventory-modal" class="modal">
+        <h2 style="margin-top:0; color:#e94560;">Ship Cargo</h2>
+        <div id="inventory-items" class="list-container"></div>
+        <button class="btn btn-sell-all" onclick="sellAll()">SELL NON-FAVOURITES</button>
+        <button class="btn" onclick="toggleInventory()" style="width:100%; background:#333; border:none; color:white;">CLOSE</button>
+    </div>
+
+    <!-- Upgrades Modal -->
+    <div id="upgrades-modal" class="modal">
+        <h2 style="margin-top:0; color:#e94560;">Ship Upgrades</h2>
+        <div id="upgrades-list" class="list-container"></div>
+        <button class="btn" onclick="toggleUpgrades()" style="width:100%; background:#333; border:none; color:white;">CLOSE</button>
+    </div>
+
+    <!-- Settings Modal -->
+    <div id="settings-modal" class="modal">
+        <h2 style="margin-top:0; color:#e94560;">Settings</h2>
+        <div class="setting-row">
+            <span>Movement Type</span>
+            <button class="btn" id="ctrl-mode-btn" onclick="switchControlMode()">KEYBOARD (WASD)</button>
+        </div>
+        <div style="font-size: 12px; color: #777; margin-top: 10px;">Note: In Mouse mode, the ship follows your cursor.</div>
+        <button class="btn" onclick="toggleSettings()" style="width:100%; background:#333; border:none; color:white; margin-top: 20px;">CLOSE</button>
+    </div>
+
+    <canvas id="gameCanvas"></canvas>
+
+<script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+
+    // ==========================================
+    // MULTIPLAYER SETUP
+    // ==========================================
+    // REPLACE THIS URL WITH YOUR RENDER.COM SERVER URL LATER
+    const socket = io('https://space-catchers-server.onrender.com'); 
+    
+    let otherPlayers = {}; 
+
+    socket.on('currentPlayers', (players) => {
+        Object.keys(players).forEach(id => {
+            if (id !== socket.id) otherPlayers[id] = players[id];
+        });
+    });
+
+    socket.on('newPlayer', (data) => {
+        otherPlayers[data.id] = data.player;
+    });
+
+    socket.on('playerMoved', (data) => {
+        if(otherPlayers[data.id]) {
+            otherPlayers[data.id] = data.player;
+        }
+    });
+
+    socket.on('playerDisconnected', (id) => {
+        delete otherPlayers[id];
+    });
+
+    // --- 1. ASSET LOADING ---
+    let shipLoaded = false;
+    const shipImg = new Image();
+    shipImg.src = 'spaceship.png'; 
+    shipImg.onload = () => shipLoaded = true;
+
+    // --- 2. GAME SETTINGS ---
+    const WORLD_SIZE = 6000;      
+    const ITEM_LIMIT = 200;       
+    const ITEM_SIZE = 45;         
+    const ACCEL = 0.15;           
+    const MAX_SPEED = 5;          
+    const FRICTION = 0.98;        
+    const SHIP_DRAW_SIZE = 80;    
+    const rotationOffset = 0;     
+
+    const BASE_SHOOT = { ammoMax: 5, fireRate: 2000, reloadTime: 7000, range: 400, damage: 10, bulletSize: 8, speed: 10, color: 'red' };
+
+    const ITEM_TYPES = [
+        { emoji: '💎', name: 'Diamond', value: 45 },
+        { emoji: '☄️', name: 'Asteroid Meat', value: 30 },
+        { emoji: '🛸', name: 'Alien Tech', value: 67 },
+        { emoji: '🔋', name: 'Power Cell', value: 18 },
+        { emoji: '🛰️', name: 'Satellite Scrap', value: 25 },
+        { emoji: '🎸', name: 'Guitar', value: 13 },
+        { emoji: '🍓', name: 'Strawberry', value: 8 },
+        { emoji: '⚽', name: 'Football Ball', value: 6 },
+        { emoji: '🍏', name: 'Apple', value: 5 }
+    ];
+
+    // --- 3. STATE ---
+    let money = 0;
+    let inventory = {}; 
+    let controlMode = 'keyboard'; 
+    let upgrades = { satelliteBerries: 0, overchargedApples: 0, alienJazz: 0, meatballs: 0, diamondSalad: 0 };
+    
+    let keys = {};
+    let mouse = { x: 0, y: 0 }; 
+    let items = [];
+    let trails = [];    
+    let bullets = [];   
+
+    const player = {
+        x: WORLD_SIZE / 2, y: WORLD_SIZE / 2, vx: 0, vy: 0, angle: 0,
+        ammo: 5, isReloading: false, lastShotTime: 0, reloadStartTime: 0
+    };
+
+    // --- 4. PERSISTENCE ---
+    function saveGame() {
+        localStorage.setItem('spaceCatchersSave', JSON.stringify({ money, inventory, upgrades, controlMode }));
+    }
+
+    function loadGame() {
+        const saved = localStorage.getItem('spaceCatchersSave');
+        if (saved) {
+            const parsed = JSON.parse(saved);
+            money = parsed.money || 0;
+            inventory = parsed.inventory || {};
+            upgrades = { ...upgrades, ...parsed.upgrades };
+            controlMode = parsed.controlMode || 'keyboard';
+            updateMoneyDisplay();
+            player.ammo = getCurMaxAmmo();
+            updateAmmoUI();
+            updateControlModeUI();
+        }
+    }
+
+    function resetGame() { if(confirm("Wipe all progress?")) { localStorage.removeItem('spaceCatchersSave'); location.reload(); } }
+
+    // --- 5. INITIALIZATION ---
+    function init() {
+        resize();
+        loadGame();
+        for(let i = 0; i < ITEM_LIMIT; i++) spawnOneItem();
+        animate();
+    }
+
+    function spawnOneItem() {
+        items.push({ x: Math.random() * WORLD_SIZE, y: Math.random() * WORLD_SIZE, type: ITEM_TYPES[Math.floor(Math.random() * ITEM_TYPES.length)] });
+    }
+
+    // --- 6. STAT CALCULATORS ---
+    function getCurFireRate() { let rate = BASE_SHOOT.fireRate; for(let i=0; i<upgrades.satelliteBerries; i++) rate *= 0.85; return rate; }
+    function getCurMaxAmmo() { return BASE_SHOOT.ammoMax + upgrades.overchargedApples; }
+    function getCurRange() { let rng = BASE_SHOOT.range; for(let i=0; i<upgrades.alienJazz; i++) rng *= 1.15; return rng; }
+    function getCurReloadTime() { let rt = BASE_SHOOT.reloadTime; for(let i=0; i<upgrades.diamondSalad; i++) rt *= 0.85; return rt; }
+
+    // --- 7. CONTROLS & INPUT ---
+    window.addEventListener('keydown', e => { 
+        keys[e.code] = true;
+        if(e.code === 'KeyI') toggleInventory(); 
+        if(e.code === 'KeyU') toggleUpgrades();
+        if(e.code === 'KeyO') toggleSettings();
+        if(e.code === 'Space') shoot(); 
+    });
+    window.addEventListener('keyup', e => keys[e.code] = false);
+    window.addEventListener('mousemove', e => { mouse.x = e.clientX; mouse.y = e.clientY; });
+
+    function switchControlMode() {
+        controlMode = (controlMode === 'keyboard') ? 'mouse' : 'keyboard';
+        saveGame();
+        updateControlModeUI();
+    }
+
+    function updateControlModeUI() {
+        document.getElementById('ctrl-mode-btn').innerText = (controlMode === 'keyboard') ? 'KEYBOARD (WASD)' : 'MOUSE FOLLOW';
+    }
+
+    // --- 8. ENGINE LOGIC ---
+    function shoot() {
+        const now = Date.now();
+        const fireRate = getCurFireRate();
+        if (!player.isReloading && player.ammo > 0) {
+            if (now - player.lastShotTime >= fireRate) {
+                bullets.push({ x: player.x, y: player.y, angle: player.angle, distance: 0 });
+                player.ammo--; player.lastShotTime = now; updateAmmoUI();
+                if (player.ammo <= 0) startReload();
+            }
+        }
+    }
+
+    function startReload() {
+        player.isReloading = true; player.reloadStartTime = Date.now();
+        document.getElementById('reload-bar-container').style.display = 'block';
+        document.getElementById('reload-text').style.display = 'block';
+    }
+
+    function finishReload() {
+        player.isReloading = false; player.ammo = getCurMaxAmmo();
+        document.getElementById('reload-bar-container').style.display = 'none';
+        document.getElementById('reload-text').style.display = 'none';
+        updateAmmoUI();
+    }
+
+    function update() {
+        // Record position before movement to check if we need to update the server
+        const oldX = player.x;
+        const oldY = player.y;
+        const oldAngle = player.angle;
+
+        let isMoving = false;
+
+        // --- MOVEMENT BRANCHING ---
+        if (controlMode === 'keyboard') {
+            if (keys['ArrowUp'] || keys['KeyW']) { player.vy -= ACCEL; isMoving = true; }
+            if (keys['ArrowDown'] || keys['KeyS']) { player.vy += ACCEL; isMoving = true; }
+            if (keys['ArrowLeft'] || keys['KeyA']) { player.vx -= ACCEL; isMoving = true; }
+            if (keys['ArrowRight'] || keys['KeyD']) { player.vx += ACCEL; isMoving = true; }
+        } else {
+            // MOUSE FOLLOW LOGIC
+            const worldMouseX = mouse.x + (player.x - window.innerWidth / 2);
+            const worldMouseY = mouse.y + (player.y - window.innerHeight / 2);
+
+            const dx = worldMouseX - player.x;
+            const dy = worldMouseY - player.y;
+            const dist = Math.hypot(dx, dy);
+
+            if (dist > 15) { 
+                const angle = Math.atan2(dy, dx);
+                player.vx += Math.cos(angle) * ACCEL;
+                player.vy += Math.sin(angle) * ACCEL;
+                isMoving = true;
+            }
+        }
+
+        if (Math.abs(player.vx) > 0.1 || Math.abs(player.vy) > 0.1) player.angle = Math.atan2(player.vy, player.vx);
+
+        if (player.isReloading) {
+            const elapsed = Date.now() - player.reloadStartTime;
+            const rt = getCurReloadTime();
+            const progress = (elapsed / rt) * 100;
+            document.getElementById('reload-bar').style.width = Math.min(progress, 100) + '%';
+            if (elapsed >= rt) finishReload();
+        }
+
+        if (isMoving) trails.push({ x: player.x - Math.cos(player.angle)*20, y: player.y - Math.sin(player.angle)*20, life: 1.0, size: Math.random()*8+4 });
+        trails.forEach(t => t.life -= 0.05); trails = trails.filter(t => t.life > 0);
+
+        bullets.forEach(b => {
+            b.x += Math.cos(b.angle) * BASE_SHOOT.speed;
+            b.y += Math.sin(b.angle) * BASE_SHOOT.speed;
+            b.distance += BASE_SHOOT.speed;
+        });
+        bullets = bullets.filter(b => b.distance < getCurRange());
+
+        let speed = Math.hypot(player.vx, player.vy);
+        if (speed > MAX_SPEED) { player.vx *= (MAX_SPEED/speed); player.vy *= (MAX_SPEED/speed); }
+        player.vx *= FRICTION; player.vy *= FRICTION;
+        player.x += player.vx; player.y += player.vy;
+
+        player.x = Math.max(0, Math.min(WORLD_SIZE, player.x));
+        player.y = Math.max(0, Math.min(WORLD_SIZE, player.y));
+
+        items = items.filter(item => {
+            if (Math.hypot(player.x - item.x, player.y - item.y) < 45) { addItemToInventory(item.type); return false; }
+            return true;
+        });
+        if (items.length < ITEM_LIMIT) spawnOneItem();
+
+        // MULTIPLAYER SYNC: IF WE MOVED, TELL THE SERVER
+        if (player.x !== oldX || player.y !== oldY || player.angle !== oldAngle) {
+            socket.emit('playerMovement', { x: player.x, y: player.y, angle: player.angle });
+        }
+    }
+
+    function draw() {
+        ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
+        ctx.save();
+        ctx.translate(window.innerWidth/2 - player.x, window.innerHeight/2 - player.y);
+
+        // Grid
+        ctx.strokeStyle = '#111122'; ctx.lineWidth = 2;
+        for(let i=0; i<=WORLD_SIZE; i+=300) {
+            ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, WORLD_SIZE); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(WORLD_SIZE, i); ctx.stroke();
+        }
+
+        trails.forEach(t => { ctx.fillStyle = `rgba(233, 69, 96, ${t.life})`; ctx.beginPath(); ctx.arc(t.x, t.y, t.size * t.life, 0, Math.PI * 2); ctx.fill(); });
+
+        bullets.forEach(b => {
+            ctx.fillStyle = BASE_SHOOT.color; ctx.shadowBlur = BASE_SHOOT.bulletSize * 1.5; ctx.shadowColor = BASE_SHOOT.color;
+            ctx.beginPath(); ctx.arc(b.x, b.y, BASE_SHOOT.bulletSize, 0, Math.PI * 2); ctx.fill();
+        });
+        ctx.shadowBlur = 0;
+
+        ctx.font = `${ITEM_SIZE}px serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        items.forEach(item => ctx.fillText(item.type.emoji, item.x, item.y));
+
+        // --- DRAW OTHER MULTIPLAYER SHIPS ---
+        Object.values(otherPlayers).forEach(op => {
+            ctx.save();
+            ctx.translate(op.x, op.y); 
+            ctx.rotate(op.angle + rotationOffset);
+            ctx.globalAlpha = 0.5; // Make other players slightly transparent so you know who you are
+            if (shipLoaded) ctx.drawImage(shipImg, -SHIP_DRAW_SIZE/2, -SHIP_DRAW_SIZE/2, SHIP_DRAW_SIZE, SHIP_DRAW_SIZE);
+            else { ctx.font = '50px serif'; ctx.fillText('🚀', 0, 0); }
+            ctx.restore();
+        });
+
+        // --- DRAW LOCAL PLAYER SHIP ---
+        ctx.save();
+        ctx.translate(player.x, player.y); ctx.rotate(player.angle + rotationOffset);
+        if (shipLoaded) ctx.drawImage(shipImg, -SHIP_DRAW_SIZE/2, -SHIP_DRAW_SIZE/2, SHIP_DRAW_SIZE, SHIP_DRAW_SIZE);
+        else { ctx.font = '50px serif'; ctx.fillText('🚀', 0, 0); }
+        ctx.restore();
+
+        ctx.strokeStyle = '#e94560'; ctx.lineWidth = 10; ctx.strokeRect(0, 0, WORLD_SIZE, WORLD_SIZE);
+        ctx.restore();
+    }
+
+    // --- 9. UI RENDERING ---
+
+    function handleUpgrade(key, reqs) {
+        const tier = upgrades[key];
+        if (tier >= 5) return;
+        let canAfford = true;
+        reqs.forEach(r => { if ((inventory[r.name]?.count || 0) < r.amount) canAfford = false; });
+        if (canAfford) {
+            reqs.forEach(r => inventory[r.name].count -= r.amount);
+            upgrades[key]++; saveGame(); updateUpgradesUI(); updateAmmoUI();
+        }
+    }
+
+    function updateUpgradesUI() {
+        const list = document.getElementById('upgrades-list');
+        list.innerHTML = '';
+        const questData = [
+            { id: 'satelliteBerries', title: 'Satellite Berries', desc: '+15% Shooting Speed', reqs: [{n:'Satellite Scrap', a:5}, {n:'Strawberry', a:5}] },
+            { id: 'overchargedApples', title: 'Overcharged Apples', desc: '+1 Max Ammo', reqs: [{n:'Power Cell', a:5}, {n:'Apple', a:5}] },
+            { id: 'alienJazz', title: 'Alien Jazz', desc: '+15% Range', reqs: [{n:'Alien Tech', a:5}, {n:'Guitar', a:5}] },
+            { id: 'meatballs', title: 'Meatballs', desc: '+15% Damage', reqs: [{n:'Asteroid Meat', a:5}, {n:'Football Ball', a:5}] },
+            { id: 'diamondSalad', title: 'Diamond Salad', desc: '-15% Reload Time', reqs: [{n:'Diamond', a:5}, {n:'Apple', a:3}, {n:'Strawberry', a:3}] }
+        ];
+
+        questData.forEach(q => {
+            const tier = upgrades[q.id];
+            const multiplier = Math.pow(2, tier);
+            const currentReqs = q.reqs.map(r => ({ name: r.n, amount: r.a * multiplier }));
+            const card = document.createElement('div'); card.className = 'upgrade-card';
+            let reqHtml = ''; let canAfford = (tier < 5);
+            currentReqs.forEach(r => {
+                const owned = inventory[r.name]?.count || 0;
+                if (owned < r.amount) canAfford = false;
+                reqHtml += `<span class="req-tag ${owned >= r.amount ? 'req-met' : 'req-missing'}">${r.name}: ${owned}/${r.amount}</span>`;
+            });
+            card.innerHTML = `<div><strong>${q.title}</strong> <span style="color:#e94560">Tier ${tier}/5</span></div>
+                <div style="font-size:12px; color:#aaa">${q.desc}</div><div>${reqHtml}</div>
+                ${tier < 5 ? `<button class="btn" style="width:100%; margin-top:5px;" ${!canAfford ? 'disabled' : `onclick="handleUpgrade('${q.id}', ${JSON.stringify(currentReqs).replace(/"/g, '&quot;')})"`}>DONATE ITEMS</button>` : `<div style="color:#00ff00; font-weight:bold; text-align:center;">MAX TIER</div>`}`;
+            list.appendChild(card);
+        });
+    }
+
+    function toggleInventory() { toggleModal('inventory-modal'); if (isModalOpen('inventory-modal')) updateInventoryUI(); }
+    function toggleUpgrades() { toggleModal('upgrades-modal'); if (isModalOpen('upgrades-modal')) updateUpgradesUI(); }
+    function toggleSettings() { toggleModal('settings-modal'); }
+
+    function toggleModal(id) {
+        const target = document.getElementById(id);
+        const wasOpen = target.style.display === 'block';
+        document.querySelectorAll('.modal').forEach(m => m.style.display = 'none');
+        target.style.display = wasOpen ? 'none' : 'block';
+    }
+    function isModalOpen(id) { return document.getElementById(id).style.display === 'block'; }
+
+    function updateInventoryUI() {
+        const list = document.getElementById('inventory-items'); list.innerHTML = '';
+        Object.keys(inventory).forEach(name => {
+            const item = inventory[name];
+            const row = document.createElement('div'); row.className = 'item-row';
+            row.innerHTML = `<button class="fav-btn ${item.isFav ? 'active' : ''}" onclick="toggleFav('${name}')">★</button>
+                <span style="font-size:24px;">${item.data.emoji}</span>
+                <div class="item-info"><span class="item-name">${name}</span>Owned: ${item.count}</div>
+                <button class="btn" onclick="sellOne('${name}')">Sell 1</button>`;
+            list.appendChild(row);
+        });
+    }
+
+    function updateAmmoUI() { document.getElementById('ammo-count').innerText = player.ammo; document.getElementById('ammo-max').innerText = getCurMaxAmmo(); }
+    function updateMoneyDisplay() { document.getElementById('money-count').innerText = money; }
+    function addItemToInventory(type) { if (!inventory[type.name]) inventory[type.name] = { count: 0, isFav: false, data: type }; inventory[type.name].count++; saveGame(); }
+    function sellOne(n) { const i = inventory[n]; if (i && i.count > 0) { i.count--; money += i.data.value; if (i.count === 0 && !i.isFav) delete inventory[n]; saveGame(); updateInventoryUI(); updateMoneyDisplay(); } }
+    function sellAll() { for (let n in inventory) { let i = inventory[n]; if (!i.isFav) { money += (i.count * i.data.value); i.count = 0; delete inventory[n]; } } saveGame(); updateInventoryUI(); updateMoneyDisplay(); }
+    function toggleFav(n) { if (inventory[n]) { inventory[n].isFav = !inventory[n].isFav; saveGame(); updateInventoryUI(); } }
+    function resize() { canvas.width = window.innerWidth; canvas.height = window.innerHeight; }
+    function animate() { update(); draw(); requestAnimationFrame(animate); }
+    window.addEventListener('resize', resize);
+    init();
+</script>
+</body>
+</html>
