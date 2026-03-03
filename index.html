@@ -126,9 +126,9 @@
     const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndheHlpZnpvaHFpdnBzaW1vd3F3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI1NDM3NDIsImV4cCI6MjA4ODExOTc0Mn0.2kUxhMuPgyXyX8g--Fc_amooJeFgBd9Q0qnhZ2zewMU';
     
     // Create Supabase Client safely
-    let supabase = null;
-    if (window.supabase) {
-        supabaseClient = window.supabase.createClient(supabaseUrl, supabaseKey);
+    let supabaseClient = null;
+    if (window.supabaseClient) {
+        supabaseClient = window.supabaseClient.createClient(supabaseUrl, supabaseKey);
     } else {
         console.error("Supabase not loaded. Check script tags.");
     }
@@ -225,16 +225,16 @@
     // --- 4. GAME FUNCTIONS ---
 
     async function saveGame() {
-        if (!playerName || !supabase) return;
-        const { error } = await supabase.from('saves').upsert({ 
+        if (!playerName || !supabaseClient) return;
+        const { error } = await supabaseClient.from('saves').upsert({ 
             username: playerName, money, inventory, upgrades, controlMode 
         });
         if (error) console.error("Cloud save failed:", error);
     }
 
     async function loadGame() {
-        if (!supabase) return;
-        const { data, error } = await supabase.from('saves').select('*').eq('username', playerName).single();
+        if (!supabaseClient) return;
+        const { data, error } = await supabaseClient.from('saves').select('*').eq('username', playerName).single();
         if (data) {
             console.log("Cloud save loaded!");
             money = data.money || 0;
