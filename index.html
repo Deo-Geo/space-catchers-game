@@ -104,15 +104,12 @@
         <button class="btn" onclick="toggleSettings()" style="width:100%; background:#333; border:none; color:white; margin-top: 20px;">CLOSE</button>
     </div>
 
-    <!-- Login Modal (Visible by default) -->
+    <!-- Login Modal -->
     <div id="login-modal" class="modal" style="display: block; text-align: center; padding-bottom: 40px;">
         <h2 style="color:#e94560; margin-bottom: 10px;">PILOT IDENTIFICATION</h2>
         <p style="font-size: 14px; color: #aaa; margin-bottom: 20px;">Enter your secret Pilot Name to load your save.</p>
-        
-        <!-- type="password" makes the text turn into dots ••••• -->
         <input type="password" id="pilot-name-input" placeholder="Secret Pilot Name" 
                style="background: #111; border: 1px solid #444; color: white; padding: 10px; width: 80%; font-size: 18px; text-align: center; margin-bottom: 20px; outline: none;">
-        
         <br>
         <button class="btn" onclick="startGame()" style="font-size: 20px; padding: 10px 30px;">LAUNCH SHIP</button>
     </div>
@@ -120,54 +117,33 @@
     <canvas id="gameCanvas"></canvas>
 
 <script>
+    // --- 1. SETUP & CONSTANTS ---
     const canvas = document.getElementById('gameCanvas');
     const ctx = canvas.getContext('2d');
 
-    // ==========================================
-    // CLOUD SAVE SETUP
-    // ==========================================
+    // Supabase Config
     const supabaseUrl = 'https://waxyifzohqivpsimowqw.supabase.co';
     const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndheHlpZnpvaHFpdnBzaW1vd3F3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI1NDM3NDIsImV4cCI6MjA4ODExOTc0Mn0.2kUxhMuPgyXyX8g--Fc_amooJeFgBd9Q0qnhZ2zewMU';
-    const supabase = window.supabase.createClient(supabaseUrl, supabaseKey);
-
-    // CHANGED: We don't ask for name yet. We wait for the login box.
-    let playerName = "";
-
-    // ==========================================
-    // MULTIPLAYER SETUP
-    // ==========================================
-    // REPLACE THIS URL WITH YOUR RENDER.COM SERVER URL IF NEEDED
-    const socket = io('https://space-catchers-server.onrender.com'); 
     
+    // Create Supabase Client safely
+    let supabase = null;
+    if (window.supabase) {
+        supabase = window.supabase.createClient(supabaseUrl, supabaseKey);
+    } else {
+        console.error("Supabase not loaded. Check script tags.");
+    }
+
+    // Connect to Multiplayer Server
+    const socket = io('https://space-catchers-server.onrender.com'); 
+
+    // Game Variables
+    let playerName = "";
     let otherPlayers = {}; 
-
-    socket.on('currentPlayers', (players) => {
-        Object.keys(players).forEach(id => {
-            if (id !== socket.id) otherPlayers[id] = players[id];
-        });
-    });
-
-    socket.on('newPlayer', (data) => {
-        otherPlayers[data.id] = data.player;
-    });
-
-    socket.on('playerMoved', (data) => {
-        if(otherPlayers[data.id]) {
-            otherPlayers[data.id] = data.player;
-        }
-    });
-
-    socket.on('playerDisconnected', (id) => {
-        delete otherPlayers[id];
-    });
-
-    // --- 1. ASSET LOADING ---
     let shipLoaded = false;
     const shipImg = new Image();
     shipImg.src = 'spaceship.png'; 
     shipImg.onload = () => shipLoaded = true;
 
-    // --- 2. GAME SETTINGS ---
     const WORLD_SIZE = 6000;      
     const ITEM_LIMIT = 200;       
     const ITEM_SIZE = 45;         
@@ -191,7 +167,6 @@
         { emoji: '🍏', name: 'Apple', value: 5 }
     ];
 
-    // --- 3. STATE ---
     let money = 0;
     let inventory = {}; 
     let controlMode = 'keyboard'; 
@@ -208,38 +183,65 @@
         ammo: 5, isReloading: false, lastShotTime: 0, reloadStartTime: 0
     };
 
-    // --- 4. PERSISTENCE (CLOUD SAVING) ---
+    // --- 2. STARTUP LOGIC ---
+    
+    // This function is called when the "LAUNCH SHIP" button is clicked
+    async function startGame() {
+        const input = document.getElementById('pilot-name-input');
+        const name = input.value.trim();
+
+        if (!name) {
+            alert("Please enter a Pilot Name to fly!");
+            return;
+        }
+
+        // Hide Login UI
+        document.getElementById('login-modal').style.display = 'none';
+
+        // Set global name & save locally for convenience
+        playerName = name;
+        localStorage.setItem('spaceCatchersName', playerName);
+
+        // Start the game loop
+        await init();
+    }
+
+    // Pre-fill the login box if a name is saved
+    const savedName = localStorage.getItem('spaceCatchersName');
+    if (savedName) document.getElementById('pilot-name-input').value = savedName;
+
+
+    // --- 3. SOCKET LISTENERS ---
+    socket.on('currentPlayers', (players) => {
+        Object.keys(players).forEach(id => {
+            if (id !== socket.id) otherPlayers[id] = players[id];
+        });
+    });
+    socket.on('newPlayer', (data) => otherPlayers[data.id] = data.player);
+    socket.on('playerMoved', (data) => { if(otherPlayers[data.id]) otherPlayers[data.id] = data.player; });
+    socket.on('playerDisconnected', (id) => delete otherPlayers[id]);
+
+
+    // --- 4. GAME FUNCTIONS ---
+
     async function saveGame() {
-        if (!playerName) return; // Don't save if we haven't logged in
-        const { error } = await supabase
-            .from('saves')
-            .upsert({ 
-                username: playerName, 
-                money: money, 
-                inventory: inventory, 
-                upgrades: upgrades, 
-                controlMode: controlMode 
-            });
+        if (!playerName || !supabase) return;
+        const { error } = await supabase.from('saves').upsert({ 
+            username: playerName, money, inventory, upgrades, controlMode 
+        });
         if (error) console.error("Cloud save failed:", error);
     }
 
     async function loadGame() {
-        const { data, error } = await supabase
-            .from('saves')
-            .select('*')
-            .eq('username', playerName)
-            .single();
-
+        if (!supabase) return;
+        const { data, error } = await supabase.from('saves').select('*').eq('username', playerName).single();
         if (data) {
             console.log("Cloud save loaded!");
             money = data.money || 0;
             inventory = data.inventory || {};
             upgrades = { ...upgrades, ...(data.upgrades || {}) };
             controlMode = data.controlMode || 'keyboard';
-        } else {
-            console.log("No cloud save found, starting fresh!");
         }
-
         updateMoneyDisplay();
         player.ammo = getCurMaxAmmo();
         updateAmmoUI();
@@ -253,54 +255,22 @@
         } 
     }
 
-    // --- 5. INITIALIZATION ---
     async function init() {
         resize();
-        await loadGame(); // WAIT for cloud save to load before starting
+        await loadGame(); 
         for(let i = 0; i < ITEM_LIMIT; i++) spawnOneItem();
         animate();
-    }
-
-    // --- NEW: LOGIN FUNCTION ---
-    async function startGame() {
-        const input = document.getElementById('pilot-name-input');
-        const name = input.value.trim();
-
-        if (!name) {
-            alert("Please enter a Pilot Name to fly!");
-            return;
-        }
-
-        // Hide the login box
-        document.getElementById('login-modal').style.display = 'none';
-
-        // Set the global name
-        playerName = name;
-        
-        // Save it locally so you don't have to type it next time (it will pre-fill next time)
-        localStorage.setItem('spaceCatchersName', playerName);
-
-        // NOW we start the game
-        await init();
-    }
-
-    // Check if we already have a name saved, and pre-fill the box (but keep it hidden as dots)
-    const savedName = localStorage.getItem('spaceCatchersName');
-    if (savedName) {
-        document.getElementById('pilot-name-input').value = savedName;
     }
 
     function spawnOneItem() {
         items.push({ x: Math.random() * WORLD_SIZE, y: Math.random() * WORLD_SIZE, type: ITEM_TYPES[Math.floor(Math.random() * ITEM_TYPES.length)] });
     }
 
-    // --- 6. STAT CALCULATORS ---
     function getCurFireRate() { let rate = BASE_SHOOT.fireRate; for(let i=0; i<upgrades.satelliteBerries; i++) rate *= 0.85; return rate; }
     function getCurMaxAmmo() { return BASE_SHOOT.ammoMax + upgrades.overchargedApples; }
     function getCurRange() { let rng = BASE_SHOOT.range; for(let i=0; i<upgrades.alienJazz; i++) rng *= 1.15; return rng; }
     function getCurReloadTime() { let rt = BASE_SHOOT.reloadTime; for(let i=0; i<upgrades.diamondSalad; i++) rt *= 0.85; return rt; }
 
-    // --- 7. CONTROLS & INPUT ---
     window.addEventListener('keydown', e => { 
         keys[e.code] = true;
         if(e.code === 'KeyI') toggleInventory(); 
@@ -316,12 +286,8 @@
         saveGame();
         updateControlModeUI();
     }
+    function updateControlModeUI() { document.getElementById('ctrl-mode-btn').innerText = (controlMode === 'keyboard') ? 'KEYBOARD (WASD)' : 'MOUSE FOLLOW'; }
 
-    function updateControlModeUI() {
-        document.getElementById('ctrl-mode-btn').innerText = (controlMode === 'keyboard') ? 'KEYBOARD (WASD)' : 'MOUSE FOLLOW';
-    }
-
-    // --- 8. ENGINE LOGIC ---
     function shoot() {
         const now = Date.now();
         const fireRate = getCurFireRate();
@@ -348,32 +314,21 @@
     }
 
     function update() {
-        // Record position before movement to check if we need to update the server
-        const oldX = player.x;
-        const oldY = player.y;
-        const oldAngle = player.angle;
-
+        const oldX = player.x; const oldY = player.y; const oldAngle = player.angle;
         let isMoving = false;
 
-        // --- MOVEMENT BRANCHING ---
         if (controlMode === 'keyboard') {
             if (keys['ArrowUp'] || keys['KeyW']) { player.vy -= ACCEL; isMoving = true; }
             if (keys['ArrowDown'] || keys['KeyS']) { player.vy += ACCEL; isMoving = true; }
             if (keys['ArrowLeft'] || keys['KeyA']) { player.vx -= ACCEL; isMoving = true; }
             if (keys['ArrowRight'] || keys['KeyD']) { player.vx += ACCEL; isMoving = true; }
         } else {
-            // MOUSE FOLLOW LOGIC
             const worldMouseX = mouse.x + (player.x - window.innerWidth / 2);
             const worldMouseY = mouse.y + (player.y - window.innerHeight / 2);
-
-            const dx = worldMouseX - player.x;
-            const dy = worldMouseY - player.y;
-            const dist = Math.hypot(dx, dy);
-
+            const dx = worldMouseX - player.x; const dy = worldMouseY - player.y; const dist = Math.hypot(dx, dy);
             if (dist > 15) { 
                 const angle = Math.atan2(dy, dx);
-                player.vx += Math.cos(angle) * ACCEL;
-                player.vy += Math.sin(angle) * ACCEL;
+                player.vx += Math.cos(angle) * ACCEL; player.vy += Math.sin(angle) * ACCEL;
                 isMoving = true;
             }
         }
@@ -383,8 +338,7 @@
         if (player.isReloading) {
             const elapsed = Date.now() - player.reloadStartTime;
             const rt = getCurReloadTime();
-            const progress = (elapsed / rt) * 100;
-            document.getElementById('reload-bar').style.width = Math.min(progress, 100) + '%';
+            document.getElementById('reload-bar').style.width = Math.min((elapsed / rt) * 100, 100) + '%';
             if (elapsed >= rt) finishReload();
         }
 
@@ -392,9 +346,7 @@
         trails.forEach(t => t.life -= 0.05); trails = trails.filter(t => t.life > 0);
 
         bullets.forEach(b => {
-            b.x += Math.cos(b.angle) * BASE_SHOOT.speed;
-            b.y += Math.sin(b.angle) * BASE_SHOOT.speed;
-            b.distance += BASE_SHOOT.speed;
+            b.x += Math.cos(b.angle) * BASE_SHOOT.speed; b.y += Math.sin(b.angle) * BASE_SHOOT.speed; b.distance += BASE_SHOOT.speed;
         });
         bullets = bullets.filter(b => b.distance < getCurRange());
 
@@ -403,8 +355,7 @@
         player.vx *= FRICTION; player.vy *= FRICTION;
         player.x += player.vx; player.y += player.vy;
 
-        player.x = Math.max(0, Math.min(WORLD_SIZE, player.x));
-        player.y = Math.max(0, Math.min(WORLD_SIZE, player.y));
+        player.x = Math.max(0, Math.min(WORLD_SIZE, player.x)); player.y = Math.max(0, Math.min(WORLD_SIZE, player.y));
 
         items = items.filter(item => {
             if (Math.hypot(player.x - item.x, player.y - item.y) < 45) { addItemToInventory(item.type); return false; }
@@ -412,7 +363,6 @@
         });
         if (items.length < ITEM_LIMIT) spawnOneItem();
 
-        // MULTIPLAYER SYNC: IF WE MOVED, TELL THE SERVER
         if (player.x !== oldX || player.y !== oldY || player.angle !== oldAngle) {
             socket.emit('playerMovement', { x: player.x, y: player.y, angle: player.angle });
         }
@@ -423,7 +373,6 @@
         ctx.save();
         ctx.translate(window.innerWidth/2 - player.x, window.innerHeight/2 - player.y);
 
-        // Grid
         ctx.strokeStyle = '#111122'; ctx.lineWidth = 2;
         for(let i=0; i<=WORLD_SIZE; i+=300) {
             ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, WORLD_SIZE); ctx.stroke();
@@ -441,18 +390,15 @@
         ctx.font = `${ITEM_SIZE}px serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
         items.forEach(item => ctx.fillText(item.type.emoji, item.x, item.y));
 
-        // --- DRAW OTHER MULTIPLAYER SHIPS ---
         Object.values(otherPlayers).forEach(op => {
             ctx.save();
-            ctx.translate(op.x, op.y); 
-            ctx.rotate(op.angle + rotationOffset);
-            ctx.globalAlpha = 0.5; // Make other players slightly transparent so you know who you are
+            ctx.translate(op.x, op.y); ctx.rotate(op.angle + rotationOffset);
+            ctx.globalAlpha = 0.5; 
             if (shipLoaded) ctx.drawImage(shipImg, -SHIP_DRAW_SIZE/2, -SHIP_DRAW_SIZE/2, SHIP_DRAW_SIZE, SHIP_DRAW_SIZE);
             else { ctx.font = '50px serif'; ctx.fillText('🚀', 0, 0); }
             ctx.restore();
         });
 
-        // --- DRAW LOCAL PLAYER SHIP ---
         ctx.save();
         ctx.translate(player.x, player.y); ctx.rotate(player.angle + rotationOffset);
         if (shipLoaded) ctx.drawImage(shipImg, -SHIP_DRAW_SIZE/2, -SHIP_DRAW_SIZE/2, SHIP_DRAW_SIZE, SHIP_DRAW_SIZE);
@@ -463,22 +409,16 @@
         ctx.restore();
     }
 
-    // --- 9. UI RENDERING ---
-
     function handleUpgrade(key, reqs) {
-        const tier = upgrades[key];
-        if (tier >= 5) return;
-        let canAfford = true;
+        const tier = upgrades[key]; if (tier >= 5) return; let canAfford = true;
         reqs.forEach(r => { if ((inventory[r.name]?.count || 0) < r.amount) canAfford = false; });
         if (canAfford) {
             reqs.forEach(r => inventory[r.name].count -= r.amount);
             upgrades[key]++; saveGame(); updateUpgradesUI(); updateAmmoUI();
         }
     }
-
     function updateUpgradesUI() {
-        const list = document.getElementById('upgrades-list');
-        list.innerHTML = '';
+        const list = document.getElementById('upgrades-list'); list.innerHTML = '';
         const questData = [
             { id: 'satelliteBerries', title: 'Satellite Berries', desc: '+15% Shooting Speed', reqs: [{n:'Satellite Scrap', a:5}, {n:'Strawberry', a:5}] },
             { id: 'overchargedApples', title: 'Overcharged Apples', desc: '+1 Max Ammo', reqs: [{n:'Power Cell', a:5}, {n:'Apple', a:5}] },
@@ -486,21 +426,15 @@
             { id: 'meatballs', title: 'Meatballs', desc: '+15% Damage', reqs: [{n:'Asteroid Meat', a:5}, {n:'Football Ball', a:5}] },
             { id: 'diamondSalad', title: 'Diamond Salad', desc: '-15% Reload Time', reqs: [{n:'Diamond', a:5}, {n:'Apple', a:3}, {n:'Strawberry', a:3}] }
         ];
-
         questData.forEach(q => {
-            const tier = upgrades[q.id];
-            const multiplier = Math.pow(2, tier);
-            const currentReqs = q.reqs.map(r => ({ name: r.n, amount: r.a * multiplier }));
+            const tier = upgrades[q.id]; const multiplier = Math.pow(2, tier); const currentReqs = q.reqs.map(r => ({ name: r.n, amount: r.a * multiplier }));
             const card = document.createElement('div'); card.className = 'upgrade-card';
             let reqHtml = ''; let canAfford = (tier < 5);
             currentReqs.forEach(r => {
-                const owned = inventory[r.name]?.count || 0;
-                if (owned < r.amount) canAfford = false;
+                const owned = inventory[r.name]?.count || 0; if (owned < r.amount) canAfford = false;
                 reqHtml += `<span class="req-tag ${owned >= r.amount ? 'req-met' : 'req-missing'}">${r.name}: ${owned}/${r.amount}</span>`;
             });
-            card.innerHTML = `<div><strong>${q.title}</strong> <span style="color:#e94560">Tier ${tier}/5</span></div>
-                <div style="font-size:12px; color:#aaa">${q.desc}</div><div>${reqHtml}</div>
-                ${tier < 5 ? `<button class="btn" style="width:100%; margin-top:5px;" ${!canAfford ? 'disabled' : `onclick="handleUpgrade('${q.id}', ${JSON.stringify(currentReqs).replace(/"/g, '&quot;')})"`}>DONATE ITEMS</button>` : `<div style="color:#00ff00; font-weight:bold; text-align:center;">MAX TIER</div>`}`;
+            card.innerHTML = `<div><strong>${q.title}</strong> <span style="color:#e94560">Tier ${tier}/5</span></div><div style="font-size:12px; color:#aaa">${q.desc}</div><div>${reqHtml}</div>${tier < 5 ? `<button class="btn" style="width:100%; margin-top:5px;" ${!canAfford ? 'disabled' : `onclick="handleUpgrade('${q.id}', ${JSON.stringify(currentReqs).replace(/"/g, '&quot;')})"`}>DONATE ITEMS</button>` : `<div style="color:#00ff00; font-weight:bold; text-align:center;">MAX TIER</div>`}`;
             list.appendChild(card);
         });
     }
@@ -508,24 +442,17 @@
     function toggleInventory() { toggleModal('inventory-modal'); if (isModalOpen('inventory-modal')) updateInventoryUI(); }
     function toggleUpgrades() { toggleModal('upgrades-modal'); if (isModalOpen('upgrades-modal')) updateUpgradesUI(); }
     function toggleSettings() { toggleModal('settings-modal'); }
-
     function toggleModal(id) {
-        const target = document.getElementById(id);
-        const wasOpen = target.style.display === 'block';
-        document.querySelectorAll('.modal').forEach(m => m.style.display = 'none');
-        target.style.display = wasOpen ? 'none' : 'block';
+        const target = document.getElementById(id); const wasOpen = target.style.display === 'block';
+        document.querySelectorAll('.modal').forEach(m => m.style.display = 'none'); target.style.display = wasOpen ? 'none' : 'block';
     }
     function isModalOpen(id) { return document.getElementById(id).style.display === 'block'; }
-
     function updateInventoryUI() {
         const list = document.getElementById('inventory-items'); list.innerHTML = '';
         Object.keys(inventory).forEach(name => {
             const item = inventory[name];
             const row = document.createElement('div'); row.className = 'item-row';
-            row.innerHTML = `<button class="fav-btn ${item.isFav ? 'active' : ''}" onclick="toggleFav('${name}')">★</button>
-                <span style="font-size:24px;">${item.data.emoji}</span>
-                <div class="item-info"><span class="item-name">${name}</span>Owned: ${item.count}</div>
-                <button class="btn" onclick="sellOne('${name}')">Sell 1</button>`;
+            row.innerHTML = `<button class="fav-btn ${item.isFav ? 'active' : ''}" onclick="toggleFav('${name}')">★</button><span style="font-size:24px;">${item.data.emoji}</span><div class="item-info"><span class="item-name">${name}</span>Owned: ${item.count}</div><button class="btn" onclick="sellOne('${name}')">Sell 1</button>`;
             list.appendChild(row);
         });
     }
@@ -539,8 +466,6 @@
     function resize() { canvas.width = window.innerWidth; canvas.height = window.innerHeight; }
     function animate() { update(); draw(); requestAnimationFrame(animate); }
     window.addEventListener('resize', resize);
-    
-    // NOTE: Removed 'init()' from here. It is now called inside 'startGame()'!
 </script>
 </body>
 </html>
