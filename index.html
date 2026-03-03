@@ -128,7 +128,7 @@
     // Create Supabase Client safely
     let supabase = null;
     if (window.supabase) {
-        supabase = window.supabase.createClient(supabaseUrl, supabaseKey);
+        supabaseClient = window.supabase.createClient(supabaseUrl, supabaseKey);
     } else {
         console.error("Supabase not loaded. Check script tags.");
     }
