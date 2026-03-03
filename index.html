@@ -7,6 +7,8 @@
     
     <!-- ADDED: Socket.io Library for Multiplayer -->
     <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <!-- ADDED: Supabase for Cloud Saving -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 
     <style>
         body { margin: 0; overflow: hidden; background: #020205; font-family: 'Segoe UI', sans-serif; }
@@ -144,6 +146,21 @@
     const ctx = canvas.getContext('2d');
 
     // ==========================================
+    // CLOUD SAVE SETUP
+    // ==========================================
+    const supabaseUrl = 'https://waxyifzohqivpsimowqw.supabase.co';
+    const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndheHlpZnpvaHFpdnBzaW1vd3F3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI1NDM3NDIsImV4cCI6MjA4ODExOTc0Mn0.2kUxhMuPgyXyX8g--Fc_amooJeFgBd9Q0qnhZ2zewMU';
+    const supabase = window.supabase.createClient(supabaseUrl, supabaseKey);
+
+    // Ask player for a name to save their data under
+    let playerName = localStorage.getItem('spaceCatchersName');
+    if (!playerName) {
+        playerName = prompt("Enter your Pilot Name to save your progress in the cloud:");
+        if (!playerName) playerName = "Guest_" + Math.floor(Math.random() * 10000);
+        localStorage.setItem('spaceCatchersName', playerName);
+    }
+
+    // ==========================================
     // MULTIPLAYER SETUP
     // ==========================================
     // REPLACE THIS URL WITH YOUR RENDER.COM SERVER URL LATER
@@ -218,36 +235,60 @@
         ammo: 5, isReloading: false, lastShotTime: 0, reloadStartTime: 0
     };
 
-    // --- 4. PERSISTENCE ---
-    function saveGame() {
-        localStorage.setItem('spaceCatchersSave', JSON.stringify({ money, inventory, upgrades, controlMode }));
+    // --- 4. PERSISTENCE (CLOUD SAVING) ---
+    async function saveGame() {
+        // Save to cloud!
+        const { error } = await supabase
+            .from('saves')
+            .upsert({ 
+                username: playerName, 
+                money: money, 
+                inventory: inventory, 
+                upgrades: upgrades, 
+                controlMode: controlMode 
+            });
+            
+        if (error) console.error("Cloud save failed:", error);
     }
 
-    function loadGame() {
-        const saved = localStorage.getItem('spaceCatchersSave');
-        if (saved) {
-            const parsed = JSON.parse(saved);
-            money = parsed.money || 0;
-            inventory = parsed.inventory || {};
-            upgrades = { ...upgrades, ...parsed.upgrades };
-            controlMode = parsed.controlMode || 'keyboard';
-            updateMoneyDisplay();
-            player.ammo = getCurMaxAmmo();
-            updateAmmoUI();
-            updateControlModeUI();
+    async function loadGame() {
+        // Fetch from cloud!
+        const { data, error } = await supabase
+            .from('saves')
+            .select('*')
+            .eq('username', playerName)
+            .single();
+
+        if (data) {
+            console.log("Cloud save loaded!");
+            money = data.money || 0;
+            inventory = data.inventory || {};
+            upgrades = { ...upgrades, ...(data.upgrades || {}) };
+            controlMode = data.controlMode || 'keyboard';
+        } else {
+            console.log("No cloud save found, starting fresh!");
         }
+
+        updateMoneyDisplay();
+        player.ammo = getCurMaxAmmo();
+        updateAmmoUI();
+        updateControlModeUI();
     }
 
-    function resetGame() { if(confirm("Wipe all progress?")) { localStorage.removeItem('spaceCatchersSave'); location.reload(); } }
+    function resetGame() { 
+        if(confirm("Wipe all cloud progress?")) { 
+            localStorage.removeItem('spaceCatchersName'); 
+            location.reload(); 
+        } 
+    }
 
     // --- 5. INITIALIZATION ---
-    function init() {
+    async function init() {
         resize();
-        loadGame();
+        await loadGame(); // WAIT for cloud save to load before starting
         for(let i = 0; i < ITEM_LIMIT; i++) spawnOneItem();
         animate();
     }
-
     function spawnOneItem() {
         items.push({ x: Math.random() * WORLD_SIZE, y: Math.random() * WORLD_SIZE, type: ITEM_TYPES[Math.floor(Math.random() * ITEM_TYPES.length)] });
     }
