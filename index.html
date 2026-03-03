@@ -7,8 +7,9 @@
     
     <!-- Socket.io for Multiplayer -->
     <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
-    <!-- Supabase for Cloud Saving -->
-    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    
+    <!-- Supabase (SPECIFIC BROWSER VERSION) -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 
     <style>
         body { margin: 0; overflow: hidden; background: #020205; font-family: 'Segoe UI', sans-serif; }
@@ -125,12 +126,20 @@
     const supabaseUrl = 'https://waxyifzohqivpsimowqw.supabase.co';
     const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndheHlpZnpvaHFpdnBzaW1vd3F3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI1NDM3NDIsImV4cCI6MjA4ODExOTc0Mn0.2kUxhMuPgyXyX8g--Fc_amooJeFgBd9Q0qnhZ2zewMU';
     
-    // Create Supabase Client safely
+    // Create Supabase Client
     let supabaseClient = null;
-    if (window.supabaseClient) {
-        supabaseClient = window.supabaseClient.createClient(supabaseUrl, supabaseKey);
+    
+    // Check if the library loaded correctly
+    if (window.supabase) {
+        supabaseClient = window.supabase.createClient(supabaseUrl, supabaseKey);
+        console.log("Supabase connected successfully!");
     } else {
-        console.error("Supabase not loaded. Check script tags.");
+        console.error("CRITICAL ERROR: Supabase library did not load. Check network/adblock.");
+        // Fallback check: sometimes it loads as 'Supabase' (capital S)
+        if (window.Supabase) {
+             supabaseClient = window.Supabase.createClient(supabaseUrl, supabaseKey);
+             console.log("Supabase connected via fallback!");
+        }
     }
 
     // Connect to Multiplayer Server
@@ -187,6 +196,11 @@
     
     // This function is called when the "LAUNCH SHIP" button is clicked
     async function startGame() {
+        if (!supabaseClient) {
+            alert("Error: Database not connected. Try refreshing the page.");
+            return;
+        }
+
         const input = document.getElementById('pilot-name-input');
         const name = input.value.trim();
 
@@ -226,6 +240,7 @@
 
     async function saveGame() {
         if (!playerName || !supabaseClient) return;
+        
         const { error } = await supabaseClient.from('saves').upsert({ 
             username: playerName, money, inventory, upgrades, controlMode 
         });
@@ -234,6 +249,7 @@
 
     async function loadGame() {
         if (!supabaseClient) return;
+        
         const { data, error } = await supabaseClient.from('saves').select('*').eq('username', playerName).single();
         if (data) {
             console.log("Cloud save loaded!");
